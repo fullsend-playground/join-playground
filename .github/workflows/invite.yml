@@ -15,41 +15,45 @@ jobs:
           script: |
             const username = context.payload.issue.user.login;
             const org = context.repo.owner;
-            const { Octokit } = require('@octokit/rest');
-            const inviteOctokit = new Octokit({ auth: process.env.INVITE_TOKEN });
+            const repo = context.repo.repo;
+            const issue_number = context.issue.number;
+
+            // Create a second client authenticated with the PAT (has admin:org)
+            const { getOctokit } = require('@actions/github');
+            const adminClient = getOctokit(process.env.INVITE_TOKEN);
 
             // Check if already a member
             try {
-              const membership = await inviteOctokit.orgs.getMembershipForUser({ org, username });
+              const membership = await adminClient.rest.orgs.getMembershipForUser({ org, username });
               if (membership.data.state === 'active') {
                 await github.rest.issues.createComment({
-                  owner: org, repo: context.repo.repo, issue_number: context.issue.number,
+                  owner: org, repo, issue_number,
                   body: `👋 @${username} You're already a member of **${org}**! Go try the agents:\n- [go-hello issues](https://github.com/${org}/go-hello/issues) — comment \`/fs-triage\`\n- [python-app issues](https://github.com/${org}/python-app/issues) — comment \`/fs-code\``
                 });
-                await github.rest.issues.update({ owner: org, repo: context.repo.repo, issue_number: context.issue.number, state: 'closed' });
+                await github.rest.issues.update({ owner: org, repo, issue_number, state: 'closed' });
                 return;
               }
             } catch (e) {
-              // Not a member — continue to invite
+              // 404 = not a member, continue to invite
             }
 
             try {
-              const userRes = await inviteOctokit.users.getByUsername({ username });
-              await inviteOctokit.orgs.createInvitation({
+              const userRes = await adminClient.rest.users.getByUsername({ username });
+              await adminClient.rest.orgs.createInvitation({
                 org,
                 invitee_id: userRes.data.id,
                 role: 'direct_member'
               });
 
               await github.rest.issues.createComment({
-                owner: org, repo: context.repo.repo, issue_number: context.issue.number,
-                body: `✅ @${username} You've been invited to **${org}**!\n\n**Next steps:**\n1. Accept your invite → https://github.com/orgs/${org}/invitation\n2. Then try fullsend agents:\n   - [go-hello](https://github.com/${org}/go-hello/issues/new) — comment \`/fs-triage\`\n   - [python-app](https://github.com/${org}/python-app/issues/new) — comment \`/fs-code\``
+                owner: org, repo, issue_number,
+                body: `✅ @${username} You've been invited to **${org}**!\n\n**Next steps:**\n1. Accept your invite → https://github.com/orgs/${org}/invitation\n2. Then try fullsend agents:\n   - [go-hello](https://github.com/${org}/go-hello/issues) — comment \`/fs-triage\`\n   - [python-app](https://github.com/${org}/python-app/issues) — comment \`/fs-code\``
               });
             } catch (error) {
               await github.rest.issues.createComment({
-                owner: org, repo: context.repo.repo, issue_number: context.issue.number,
+                owner: org, repo, issue_number,
                 body: `❌ @${username} Something went wrong: ${error.message}\n\nAsk the presenter to invite you manually.`
               });
             }
 
-            await github.rest.issues.update({ owner: org, repo: context.repo.repo, issue_number: context.issue.number, state: 'closed' });
+            await github.rest.issues.update({ owner: org, repo, issue_number, state: 'closed' });

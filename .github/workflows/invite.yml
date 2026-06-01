@@ -7,20 +7,24 @@ jobs:
   invite:
     runs-on: ubuntu-latest
     steps:
-      - name: Invite user to org
+      - name: Invite user and comment
         uses: actions/github-script@v7
+        env:
+          INVITE_TOKEN: ${{ secrets.ORG_INVITE_TOKEN }}
         with:
-          github-token: ${{ secrets.ORG_INVITE_TOKEN }}
           script: |
             const username = context.payload.issue.user.login;
             const org = context.repo.owner;
+            const { Octokit } = require('@octokit/rest');
+            const inviteOctokit = new Octokit({ auth: process.env.INVITE_TOKEN });
 
+            // Check if already a member
             try {
-              const membership = await github.rest.orgs.getMembershipForUser({ org, username });
+              const membership = await inviteOctokit.orgs.getMembershipForUser({ org, username });
               if (membership.data.state === 'active') {
                 await github.rest.issues.createComment({
                   owner: org, repo: context.repo.repo, issue_number: context.issue.number,
-                  body: `👋 @${username} You're already a member of **${org}**! Go create issues on [go-hello](https://github.com/${org}/go-hello/issues) or [python-app](https://github.com/${org}/python-app/issues) and comment \`/fs-triage\` to try the agents.`
+                  body: `👋 @${username} You're already a member of **${org}**! Go try the agents:\n- [go-hello issues](https://github.com/${org}/go-hello/issues) — comment \`/fs-triage\`\n- [python-app issues](https://github.com/${org}/python-app/issues) — comment \`/fs-code\``
                 });
                 await github.rest.issues.update({ owner: org, repo: context.repo.repo, issue_number: context.issue.number, state: 'closed' });
                 return;
@@ -30,8 +34,8 @@ jobs:
             }
 
             try {
-              const userRes = await github.rest.users.getByUsername({ username });
-              await github.rest.orgs.createInvitation({
+              const userRes = await inviteOctokit.users.getByUsername({ username });
+              await inviteOctokit.orgs.createInvitation({
                 org,
                 invitee_id: userRes.data.id,
                 role: 'direct_member'
@@ -39,7 +43,7 @@ jobs:
 
               await github.rest.issues.createComment({
                 owner: org, repo: context.repo.repo, issue_number: context.issue.number,
-                body: `✅ @${username} You've been invited to **${org}**!\n\n**Next steps:**\n1. Accept your invite → https://github.com/orgs/${org}/invitation\n2. Then go try fullsend agents:\n   - [go-hello issues](https://github.com/${org}/go-hello/issues/new) — comment \`/fs-triage\`\n   - [python-app issues](https://github.com/${org}/python-app/issues/new) — comment \`/fs-code\``
+                body: `✅ @${username} You've been invited to **${org}**!\n\n**Next steps:**\n1. Accept your invite → https://github.com/orgs/${org}/invitation\n2. Then try fullsend agents:\n   - [go-hello](https://github.com/${org}/go-hello/issues/new) — comment \`/fs-triage\`\n   - [python-app](https://github.com/${org}/python-app/issues/new) — comment \`/fs-code\``
               });
             } catch (error) {
               await github.rest.issues.createComment({
@@ -48,13 +52,4 @@ jobs:
               });
             }
 
-      - name: Close issue
-        uses: actions/github-script@v7
-        with:
-          script: |
-            await github.rest.issues.update({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: context.issue.number,
-              state: 'closed'
-            });
+            await github.rest.issues.update({ owner: org, repo: context.repo.repo, issue_number: context.issue.number, state: 'closed' });

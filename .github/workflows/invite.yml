@@ -7,53 +7,61 @@ jobs:
   invite:
     runs-on: ubuntu-latest
     steps:
-      - name: Invite user and comment
+      - name: Invite user to org
+        id: invite
         uses: actions/github-script@v7
-        env:
-          INVITE_TOKEN: ${{ secrets.ORG_INVITE_TOKEN }}
         with:
+          github-token: ${{ secrets.ORG_INVITE_TOKEN }}
+          result-encoding: string
           script: |
             const username = context.payload.issue.user.login;
             const org = context.repo.owner;
-            const repo = context.repo.repo;
-            const issue_number = context.issue.number;
-
-            // Create a second client authenticated with the PAT (has admin:org)
-            const { getOctokit } = require('@actions/github');
-            const adminClient = getOctokit(process.env.INVITE_TOKEN);
 
             // Check if already a member
             try {
-              const membership = await adminClient.rest.orgs.getMembershipForUser({ org, username });
+              const membership = await github.rest.orgs.getMembershipForUser({ org, username });
               if (membership.data.state === 'active') {
-                await github.rest.issues.createComment({
-                  owner: org, repo, issue_number,
-                  body: `👋 @${username} You're already a member of **${org}**! Go try the agents:\n- [go-hello issues](https://github.com/${org}/go-hello/issues) — comment \`/fs-triage\`\n- [python-app issues](https://github.com/${org}/python-app/issues) — comment \`/fs-code\``
-                });
-                await github.rest.issues.update({ owner: org, repo, issue_number, state: 'closed' });
-                return;
+                return 'already_member';
               }
             } catch (e) {
-              // 404 = not a member, continue to invite
+              // 404 = not a member, continue
             }
 
+            // Invite
             try {
-              const userRes = await adminClient.rest.users.getByUsername({ username });
-              await adminClient.rest.orgs.createInvitation({
+              const userRes = await github.rest.users.getByUsername({ username });
+              await github.rest.orgs.createInvitation({
                 org,
                 invitee_id: userRes.data.id,
                 role: 'direct_member'
               });
-
-              await github.rest.issues.createComment({
-                owner: org, repo, issue_number,
-                body: `✅ @${username} You've been invited to **${org}**!\n\n**Next steps:**\n1. Accept your invite → https://github.com/orgs/${org}/invitation\n2. Then try fullsend agents:\n   - [go-hello](https://github.com/${org}/go-hello/issues) — comment \`/fs-triage\`\n   - [python-app](https://github.com/${org}/python-app/issues) — comment \`/fs-code\``
-              });
+              return 'invited';
             } catch (error) {
-              await github.rest.issues.createComment({
-                owner: org, repo, issue_number,
-                body: `❌ @${username} Something went wrong: ${error.message}\n\nAsk the presenter to invite you manually.`
-              });
+              core.setFailed(error.message);
+              return 'error:' + error.message;
             }
 
-            await github.rest.issues.update({ owner: org, repo, issue_number, state: 'closed' });
+      - name: Comment and close
+        if: always()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const username = context.payload.issue.user.login;
+            const org = context.repo.owner;
+            const result = '${{ steps.invite.outputs.result }}';
+
+            let body;
+            if (result === 'already_member') {
+              body = `👋 @${username} You're already a member of **${org}**! Go try the agents:\n- [go-hello issues](https://github.com/${org}/go-hello/issues) — comment \`/fs-triage\`\n- [python-app issues](https://github.com/${org}/python-app/issues) — comment \`/fs-code\``;
+            } else if (result === 'invited') {
+              body = `✅ @${username} You've been invited to **${org}**!\n\n**Next steps:**\n1. Accept your invite → https://github.com/orgs/${org}/invitation\n2. Then try fullsend agents:\n   - [go-hello](https://github.com/${org}/go-hello/issues) — comment \`/fs-triage\`\n   - [python-app](https://github.com/${org}/python-app/issues) — comment \`/fs-code\``;
+            } else {
+              body = `❌ @${username} Something went wrong: ${result}\n\nAsk the presenter to invite you manually.`;
+            }
+
+            await github.rest.issues.createComment({
+              owner: org, repo: context.repo.repo, issue_number: context.issue.number, body
+            });
+            await github.rest.issues.update({
+              owner: org, repo: context.repo.repo, issue_number: context.issue.number, state: 'closed'
+            });

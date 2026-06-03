@@ -1,0 +1,50 @@
+name: Fullsend Usage Report
+
+on:
+  schedule:
+    - cron: '0 * * * *'
+  workflow_dispatch:
+    inputs:
+      period_hours:
+        description: 'Lookback window (hours)'
+        default: '1'
+        type: choice
+        options: ['1', '6', '12', '24', '168', '720']
+      dry_run:
+        description: 'Print report to logs without sending to Slack'
+        default: false
+        type: boolean
+
+concurrency:
+  group: usage-report
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  actions: read
+  issues: read
+  pull-requests: read
+
+jobs:
+  report:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      GH_TOKEN: ${{ secrets.ORG_TOKEN || github.token }}
+      SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+      GITHUB_ORG: fullsend-playground
+      METRICS_REPO: join-playground
+      REPORT_PERIOD_HOURS: ${{ inputs.period_hours || '1' }}
+      DRY_RUN: ${{ inputs.dry_run || 'false' }}
+      QUICKCHART_HOST: https://quickchart.io
+    steps:
+      - uses: actions/checkout@v4 # 34e11487
+        with:
+          ref: ${{ github.ref }}
+
+      - uses: actions/setup-python@v5 # a26af69b
+        with:
+          python-version: '3.12'
+
+      - name: Generate and send usage report
+        run: python .github/scripts/usage-report.py

@@ -162,11 +162,12 @@ def collect_runs(repo, since):
         name = run.get("name", "unknown")
         conclusion = run.get("conclusion") or "in_progress"
         event = run.get("event", "unknown")
+        url = run.get("html_url", "")
 
         if name not in by_wf:
             by_wf[name] = {
                 "total": 0, "success": 0, "failure": 0,
-                "in_progress": 0, "events": {},
+                "in_progress": 0, "events": {}, "failed_urls": [],
             }
         by_wf[name]["total"] += 1
 
@@ -174,6 +175,8 @@ def collect_runs(repo, since):
             by_wf[name]["success"] += 1
         elif conclusion in ("failure", "cancelled", "timed_out"):
             by_wf[name]["failure"] += 1
+            if url:
+                by_wf[name]["failed_urls"].append(url)
         else:
             by_wf[name]["in_progress"] += 1
 
@@ -216,6 +219,10 @@ def collect_all():
             for w in wf_runs.values()
         )
 
+        repo_failed_urls = []
+        for w in wf_runs.values():
+            repo_failed_urls.extend(w.get("failed_urls", []))
+
         metrics["repos"][repo] = {
             "commands": sum(cmds.values()),
             "issues": iss,
@@ -226,6 +233,7 @@ def collect_all():
             "dispatches": repo_dispatch,
             "command_detail": cmds,
             "workflow_detail": {k: v["total"] for k, v in wf_runs.items()},
+            "failed_urls": repo_failed_urls,
         }
 
         all_users |= cmd_users | item_authors
@@ -233,9 +241,12 @@ def collect_all():
             all_cmds[k] = all_cmds.get(k, 0) + v
         for wf_name, wf_data in wf_runs.items():
             if wf_name not in all_wfs:
-                all_wfs[wf_name] = {"total": 0, "success": 0, "failure": 0}
+                all_wfs[wf_name] = {
+                    "total": 0, "success": 0, "failure": 0, "failed_urls": [],
+                }
             for field in ("total", "success", "failure"):
                 all_wfs[wf_name][field] += wf_data.get(field, 0)
+            all_wfs[wf_name]["failed_urls"].extend(wf_data.get("failed_urls", []))
 
     metrics["by_command"] = all_cmds
     metrics["by_workflow"] = all_wfs
@@ -628,11 +639,18 @@ def build_slack(metrics, snapshots, charts):
             for name in sorted(metrics["repos"]):
                 r = metrics["repos"][name]
                 safe = _slack_escape(name)
-                lines.append(
+                line = (
                     f"• <https://github.com/{ORG}/{name}|*{safe}*>: "
                     f"{r['commands']} cmd · {r['issues']} iss · "
                     f"{r['prs']} PR · {r['runs']} runs"
                 )
+                repo_fails = r.get("failed_urls", [])
+                if repo_fails:
+                    fail_links = [
+                        f"<{url}|fail-{i + 1}>" for i, url in enumerate(repo_fails)
+                    ]
+                    line += f"  ❌ {' '.join(fail_links)}"
+                lines.append(line)
             blocks.append({"type": "divider"})
             blocks.append(
                 {
@@ -673,7 +691,14 @@ def build_slack(metrics, snapshots, charts):
                 w = metrics["by_workflow"][wf_name]
                 badge = _success_badge(w["success"], w["failure"])
                 safe_wf = _slack_escape(wf_name)
-                wf_lines.append(f"• `{safe_wf}`: {w['total']} runs  {badge}")
+                line = f"• `{safe_wf}`: {w['total']} runs  {badge}"
+                failed_urls = w.get("failed_urls", [])
+                if failed_urls:
+                    links = [
+                        f"<{url}|#{i + 1}>" for i, url in enumerate(failed_urls)
+                    ]
+                    line += "  ❌ " + " ".join(links)
+                wf_lines.append(line)
             blocks.append({"type": "divider"})
             blocks.append(
                 {

@@ -6,6 +6,10 @@ on:
 permissions:
   issues: write
 
+env:
+  DEMO_TEAM_ID: "17806827"
+  DEMO_TEAM_SLUG: demo-participants
+
 jobs:
   invite:
     runs-on: ubuntu-latest
@@ -19,24 +23,50 @@ jobs:
           script: |
             const username = context.payload.issue.user.login;
             const org = context.repo.owner;
+            const teamId = Number(process.env.DEMO_TEAM_ID);
+            const teamSlug = process.env.DEMO_TEAM_SLUG;
+
+            if (context.payload.issue.user.type === 'Bot') {
+              return 'skipped_bot';
+            }
+
+            async function ensureDemoTeamMembership() {
+              try {
+                await github.rest.teams.addOrUpdateMembershipForUserInOrg({
+                  org,
+                  team_slug: teamSlug,
+                  username,
+                  role: 'member',
+                });
+                return true;
+              } catch (error) {
+                if (error.status === 404) {
+                  // User is not an active org member yet (pending invite).
+                  return false;
+                }
+                throw error;
+              }
+            }
 
             // Check if already a member
             try {
               const membership = await github.rest.orgs.getMembershipForUser({ org, username });
               if (membership.data.state === 'active') {
+                await ensureDemoTeamMembership();
                 return 'already_member';
               }
             } catch (e) {
               // 404 = not a member, continue
             }
 
-            // Invite
+            // Invite to org and demo team (write on go-hello, python-app, node-api only).
             try {
               const userRes = await github.rest.users.getByUsername({ username });
               await github.rest.orgs.createInvitation({
                 org,
                 invitee_id: userRes.data.id,
-                role: 'direct_member'
+                role: 'direct_member',
+                team_ids: [teamId],
               });
               return 'invited';
             } catch (error) {
@@ -52,12 +82,19 @@ jobs:
             const username = context.payload.issue.user.login;
             const org = context.repo.owner;
             const result = '${{ steps.invite.outputs.result }}';
+            const demoRepos = [
+              `[go-hello](https://github.com/${org}/go-hello/issues) — comment \`/fs-triage\``,
+              `[python-app](https://github.com/${org}/python-app/issues) — comment \`/fs-code\``,
+              `[node-api](https://github.com/${org}/node-api/issues) — comment \`/fs-triage\``,
+            ].join('\n   - ');
 
             let body;
-            if (result === 'already_member') {
-              body = `👋 @${username} You're already a member of **${org}**! Go try the agents:\n- [go-hello issues](https://github.com/${org}/go-hello/issues) — comment \`/fs-triage\`\n- [python-app issues](https://github.com/${org}/python-app/issues) — comment \`/fs-code\``;
+            if (result === 'skipped_bot') {
+              body = `🤖 @${username} Bot accounts are not invited automatically.`;
+            } else if (result === 'already_member') {
+              body = `👋 @${username} You're already a member of **${org}** — demo repo access has been refreshed.\n\nTry fullsend agents:\n   - ${demoRepos}`;
             } else if (result === 'invited') {
-              body = `✅ @${username} You've been invited to **${org}**!\n\n**Next steps:**\n1. Accept your invite → https://github.com/orgs/${org}/invitation\n2. Then try fullsend agents:\n   - [go-hello](https://github.com/${org}/go-hello/issues) — comment \`/fs-triage\`\n   - [python-app](https://github.com/${org}/python-app/issues) — comment \`/fs-code\``;
+              body = `✅ @${username} You've been invited to **${org}** with demo repo access!\n\n**Next steps:**\n1. Accept your invite → https://github.com/orgs/${org}/invitation\n2. Then try fullsend agents:\n   - ${demoRepos}`;
             } else {
               body = `❌ @${username} Something went wrong: ${result}\n\nAsk the presenter to invite you manually.`;
             }

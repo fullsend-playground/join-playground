@@ -66,6 +66,43 @@ SLASH_COMMANDS = {
     "/fs-retro", "/fs-prioritize",
 }
 
+# Infrastructure workflows — not user/agent playground activity.
+EXCLUDED_WORKFLOW_PATHS = {
+    ".github/workflows/usage-report.yml",
+}
+EXCLUDED_WORKFLOW_NAMES = {
+    "Fullsend Usage Report",
+}
+
+
+def should_count_run(run):
+    """Return False for monitoring workflows that should not appear as usage."""
+    path = (run.get("path") or "").strip()
+    name = (run.get("name") or "").strip()
+    if path in EXCLUDED_WORKFLOW_PATHS:
+        return False
+    if name in EXCLUDED_WORKFLOW_NAMES:
+        return False
+    return True
+
+
+def has_user_activity(totals):
+    """True when the reporting window contains real playground usage."""
+    return any(
+        totals.get(key, 0) > 0
+        for key in ("commands", "issues", "prs", "runs", "unique_users")
+    )
+
+
+def idle_streak_periods(snapshots):
+    """Count consecutive prior snapshots with no commands, issues, PRs, or users."""
+    streak = 0
+    for snap in reversed(snapshots[:-1]):
+        if snap.get("cmds") or snap.get("iss") or snap.get("prs") or snap.get("users"):
+            break
+        streak += 1
+    return streak
+
 
 # ── GitHub API ──────────────────────────────────────────────────────────────
 
@@ -158,6 +195,8 @@ def collect_runs(repo, since):
     by_wf = {}
     for run in run_list:
         if run.get("created_at", "") < since:
+            continue
+        if not should_count_run(run):
             continue
         name = run.get("name", "unknown")
         conclusion = run.get("conclusion") or "in_progress"
@@ -559,12 +598,8 @@ def build_slack(metrics, snapshots, charts):
     t = metrics["totals"]
     prev = snapshots[-2] if len(snapshots) >= 2 else None
     period = _period_label(PERIOD_HOURS)
-    quiet = (
-        t["commands"] == 0
-        and t["runs"] == 0
-        and t["issues"] == 0
-        and t["prs"] == 0
-    )
+    quiet = not has_user_activity(t)
+    idle_hours = idle_streak_periods(snapshots)
 
     blocks = [
         {
@@ -590,12 +625,18 @@ def build_slack(metrics, snapshots, charts):
     ]
 
     if quiet:
+        idle_note = ""
+        if idle_hours >= 2:
+            idle_note = f" (~{idle_hours}h with no playground usage)"
         blocks.append(
             {
                 "type": "section",
                 "text": {
                     "type": "mrkdwn",
-                    "text": f"_All quiet — no agent activity in the last {period}._",
+                    "text": (
+                        f"_All quiet — no agent activity in the last {period}"
+                        f"{idle_note}._"
+                    ),
                 },
             }
         )

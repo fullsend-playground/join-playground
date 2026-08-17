@@ -2,14 +2,14 @@ name: Fullsend Usage Report
 
 on:
   schedule:
-    - cron: '0 * * * *'
+    - cron: '0 */4 * * *'
   workflow_dispatch:
     inputs:
       period_hours:
         description: 'Lookback window (hours)'
-        default: '1'
+        default: '4'
         type: choice
-        options: ['1', '6', '12', '24', '168', '720']
+        options: ['1', '4', '6', '12', '24', '168', '720']
       dry_run:
         description: 'Print report to logs without sending to Slack'
         default: false
@@ -34,7 +34,7 @@ jobs:
       SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
       GITHUB_ORG: fullsend-playground
       METRICS_REPO: join-playground
-      REPORT_PERIOD_HOURS: ${{ inputs.period_hours || '1' }}
+      REPORT_PERIOD_HOURS: ${{ inputs.period_hours || '4' }}
       DRY_RUN: ${{ inputs.dry_run || 'false' }}
       QUICKCHART_HOST: https://quickchart.io
     steps:

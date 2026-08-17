@@ -599,7 +599,7 @@ def build_slack(metrics, snapshots, charts):
     prev = snapshots[-2] if len(snapshots) >= 2 else None
     period = _period_label(PERIOD_HOURS)
     quiet = not has_user_activity(t)
-    idle_hours = idle_streak_periods(snapshots)
+    idle_periods = idle_streak_periods(snapshots)
 
     blocks = [
         {
@@ -626,7 +626,8 @@ def build_slack(metrics, snapshots, charts):
 
     if quiet:
         idle_note = ""
-        if idle_hours >= 2:
+        if idle_periods >= 2:
+            idle_hours = idle_periods * PERIOD_HOURS
             idle_note = f" (~{idle_hours}h with no playground usage)"
         blocks.append(
             {
